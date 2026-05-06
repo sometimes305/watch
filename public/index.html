@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Gravity Watch Party</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Gravity内専用</p>
+          <h1>Watch Party</h1>
+        </div>
+        <div class="room-actions">
+          <span id="connectionStatus" class="status-dot">接続中</span>
+          <button id="shareRoom" class="icon-button" type="button" title="ルーム招待">↗</button>
+        </div>
+      </header>
+
+      <section class="stage">
+        <div class="video-shell">
+          <div id="emptyState" class="empty-state">
+            <img id="poster" alt="" src="https://img.youtube.com/vi/jNQXAC9IVRw/maxresdefault.jpg" />
+            <div class="empty-copy">
+              <span>Gravityの友だちと同時視聴</span>
+              <strong>YouTube URLを貼って開始</strong>
+            </div>
+          </div>
+          <div id="player"></div>
+        </div>
+
+        <form id="videoForm" class="control-strip">
+          <input id="videoUrl" type="url" inputmode="url" placeholder="YouTube URL" autocomplete="off" />
+          <button type="submit">読込</button>
+        </form>
+
+        <div class="sync-controls">
+          <button id="playButton" type="button">再生</button>
+          <button id="pauseButton" type="button">停止</button>
+          <button id="syncButton" type="button">同期</button>
+        </div>
+      </section>
+
+      <section class="profile-card">
+        <div class="gravity-profile">
+          <img id="profileAvatar" alt="" />
+          <div>
+            <label for="displayName">表示名</label>
+            <span id="gravityStatus">Gravity情報を確認中</span>
+          </div>
+        </div>
+        <div class="name-row">
+          <input id="displayName" maxlength="24" autocomplete="nickname" />
+          <button id="saveName" type="button">保存</button>
+        </div>
+      </section>
+
+      <section class="party-section members-section">
+        <div class="section-title">
+          <h2>参加者</h2>
+          <span id="memberCount">0</span>
+        </div>
+        <div id="members" class="members"></div>
+      </section>
+
+      <section class="party-section chat-section">
+        <div class="section-title">
+          <h2>チャット</h2>
+          <span id="videoTitle">未選択</span>
+        </div>
+        <div id="messages" class="messages"></div>
+        <form id="chatForm" class="chat-form">
+          <input id="chatInput" maxlength="500" placeholder="リアクションを書く" autocomplete="off" />
+          <button type="submit">送信</button>
+        </form>
+      </section>
+
+      <span id="roomLabel" class="room-label"></span>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
