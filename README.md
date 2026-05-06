@@ -23,7 +23,7 @@ npm start
 
 ## GitHub Pages 配置
 
-GitHub Pages では Node サーバーは動かないため、`public/` の中身を静的サイトとして配信します。Gravity 内ではローダーの `game_file_url` に GitHub Pages の `index.html` URL を設定してください。
+GitHub Pages では Node サーバーは動かないため、リポジトリ直下の `index.html` / `app.js` / `styles.css` を静的サイトとして配信します。Gravity 内ではローダーの `game_file_url` に GitHub Pages の `index.html` URL を設定してください。
 
 Gravity ルームがある招待URLから開かれた場合は自動参加します。通常起動の場合は、画面右上の共有ボタンで Gravity ルームを作成して招待します。
 
