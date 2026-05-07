@@ -188,6 +188,7 @@ async function setupGravity() {
   setConnection("Gravity確認中", false);
 
   try {
+    await gravity.ready(1800).catch(() => {});
     if (!profileLoadedFromUrl) {
       const userResult = await gravity.api("AgentSDK.user.getMyUserInfo", {}, 1800);
       const profile = normalizeGravityUser(userResult);
@@ -221,7 +222,8 @@ async function setupGravity() {
     const gravityRoomId = params.get("room_id") || params.get("roomid") || params.get("roomId") || "";
     if (gravityRoomId) {
       roomId = gravityRoomId;
-      await gravity.room("join_room", { room_id: roomId }, 2500).catch(() => {});
+      const joinResult = await gravity.room("join_room", { room_id: roomId }, 2500).catch(() => null);
+      addUsersFromRoomResult(joinResult);
       await enableGravityRoom();
     } else {
       renderRoomLabel("Gravityルーム未作成");
@@ -272,6 +274,8 @@ async function enableGravityRoom() {
   gravityRoomReady = true;
   renderRoomLabel("Gravityルーム");
   gravity.onRoomMessage(handleGravityMessage);
+  addOrRefreshMember(you);
+  renderRoster();
   announcePresence();
   clearInterval(presenceTimer);
   presenceTimer = setInterval(announcePresence, 12000);
@@ -402,8 +406,11 @@ async function sendGravityEnvelope(envelope) {
 
 function handleGravityMessage(event) {
   const envelope = parseGravityEnvelope(event);
-  if (!envelope) return;
-  handleGravityEnvelope(envelope);
+  if (envelope) {
+    handleGravityEnvelope(envelope);
+    return;
+  }
+  handleGravityPlatformEvent(event);
 }
 
 function handleGravityEnvelope(envelope) {
@@ -428,6 +435,23 @@ function handleRoomEvent(event) {
     return;
   }
   if (event.type === "chat") appendMessage(event.message);
+}
+
+function handleGravityPlatformEvent(event) {
+  const type = event?.type || "";
+  const data = event?.data || {};
+
+  if (type === "aitools_game_joinroom" || type === "aitoolsgamejoinroom") {
+    addOrRefreshMember(memberFromGravityUser(data));
+    renderRoster();
+    return;
+  }
+
+  if (type === "aitools_game_exitroom" || type === "aitoolsgameexitroom") {
+    const id = String(data.user_id || data.uid || data.id || data.user_name || data.name || "");
+    if (id) members.delete(id);
+    renderRoster();
+  }
 }
 
 function applyState(state, preservePlayback) {
@@ -479,6 +503,7 @@ function createGravityBridge() {
   const pendingApi = new Map();
   const pendingRoom = new Map();
   let roomHandler = () => {};
+  let receiveRegistered = false;
 
   window.addEventListener("message", (event) => {
     const data = event.data || {};
@@ -513,9 +538,36 @@ function createGravityBridge() {
     }
   });
 
+  function sdk() {
+    return window.AgentSDK;
+  }
+
+  async function waitForSdk(timeout = 1500) {
+    if (sdk()) return sdk();
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (sdk()) return sdk();
+    }
+    throw new Error("AgentSDK timeout");
+  }
+
+  function registerDirectReceiver() {
+    const api = sdk();
+    if (receiveRegistered || !api?.room?.receiveMessage) return;
+    receiveRegistered = true;
+    api.room.receiveMessage((payload) => {
+      roomHandler(payload);
+    });
+  }
+
   return {
+    ready: waitForSdk,
     api(action, params = {}, timeout = 1500) {
       if (!isGravityFrame) return Promise.reject(new Error("Gravity loader is not available"));
+      if (sdk()?.user?.getMyUserInfo && action === "AgentSDK.user.getMyUserInfo") {
+        return sdk().user.getMyUserInfo(params);
+      }
       const requestId = `req_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -528,6 +580,27 @@ function createGravityBridge() {
     },
     room(action, params = {}, timeout = 1500) {
       if (!isGravityFrame) return Promise.reject(new Error("Gravity loader is not available"));
+      const api = sdk();
+      if (api?.room) {
+        if (action === "create_room") {
+          return api.room.create({
+            max_players: params.max_players || params.maxplayers || 20,
+            room_permission: params.room_permission ?? params.permission ?? 0,
+          });
+        }
+        if (action === "join_room") {
+          return api.room.join({ room_id: params.room_id });
+        }
+        if (action === "send_msg" || action === "send_message") {
+          return api.room.sendMessage({ message: params.message || params.msg_data || "" });
+        }
+        if (action === "get_public_rooms") {
+          return api.room.getPublicRoomList();
+        }
+        if (action === "exit_room" && api.room.exit) {
+          return api.room.exit();
+        }
+      }
       const actionId = `${action}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -540,6 +613,7 @@ function createGravityBridge() {
     },
     onRoomMessage(handler) {
       roomHandler = handler;
+      registerDirectReceiver();
     },
   };
 }
@@ -562,6 +636,24 @@ function parseGravityEnvelope(event) {
 function addOrRefreshMember(member) {
   const id = member.gravityUserId || member.id || member.name;
   members.set(id, { ...publicMember(member), lastSeen: Date.now() });
+}
+
+function addUsersFromRoomResult(result) {
+  const data = result?.data || result || {};
+  const userList = data.user_list || data.userList || data.users || [];
+  if (!Array.isArray(userList)) return;
+  userList.forEach((user) => addOrRefreshMember(memberFromGravityUser(user)));
+  renderRoster();
+}
+
+function memberFromGravityUser(user) {
+  return {
+    id: String(user.user_id || user.uid || user.id || user.user_name || user.name || crypto.randomUUID()),
+    name: user.name || user.nickname || user.user_name || user.username || "guest",
+    color: colors[Math.floor(Math.random() * colors.length)],
+    avatar: user.portrait || user.avatar || user.icon || user.head_img || user.headimgurl || user.profile_image || "",
+    gravityUserId: String(user.user_id || user.uid || user.id || ""),
+  };
 }
 
 function publicMember(member) {

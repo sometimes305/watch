@@ -29,12 +29,15 @@ Gravity ルームがある招待URLから開かれた場合は自動参加しま
 
 ## Gravity ローダー連携
 
-スマグラと同じローダーブリッジ形式に合わせています。
+Gravity AgentSDK を直接読み込み、`window.AgentSDK` が使える場合は公式APIを優先します。
 
-- ユーザー情報: `window.top.postMessage({ type: "API", action, requestId, params }, "*")`
-- ユーザー情報の応答: `API_CALLBACK`
-- ルーム操作: `window.parent.postMessage({ action, actionId, actionld, ...params }, "*")`
-- ルーム応答: `gravityroomresponse` / `gravity_room_response`
-- ルームイベント: `gravityroomevent` / `gravity_room_event`
+- SDKロード: `https://cdn.gravity.place/fe/sdk/index-1.0.2.min.js`
+- ユーザー情報: `window.AgentSDK.user.getMyUserInfo()`
+- 作成: `window.AgentSDK.room.create({ max_players, room_permission })`
+- 参加: `window.AgentSDK.room.join({ room_id })`
+- 送信: `window.AgentSDK.room.sendMessage({ message: JSON.stringify(data) })`
+- 受信: `window.AgentSDK.room.receiveMessage((payload) => ...)`
+
+古いローダー向けに、スマグラと同じ `postMessage` ブリッジ形式もフォールバックとして残しています。
 
 ローカル開発時だけ WebSocket にフォールバックします。
