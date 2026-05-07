@@ -30,3 +30,5 @@ Gravity ルームがある招待URLから開かれた場合は自動参加しま
 ## Gravity ローダーの origin 注意
 
 `id=39819` のローダー実装を見る限り、SDK の `postMessage` は `https://cdn.gravity.place` origin だけを受けるチェックがあります。GitHub Pages の URL を直接 iframe に入れる場合、Gravity 側で GitHub Pages の origin を許可するか、Gravity CDN 配下にホストしないと、ユーザー情報とルームAPIは使えません。
+
+この制約に当たった場合、画面では「連携不可」と表示します。ローカル開発時だけ WebSocket にフォールバックします。

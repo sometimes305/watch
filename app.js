@@ -1,6 +1,8 @@
 const colors = ["#2f7d72", "#d96b6b", "#725ac1", "#c3832e", "#3176a3", "#7b8b3a"];
 const params = new URLSearchParams(location.search);
 const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+const isLocalDev = ["localhost", "127.0.0.1", ""].includes(location.hostname);
+const isGravityFrame = window.parent !== window;
 const defaultAvatar =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' fill='%23eef5f1'/%3E%3Ccircle cx='40' cy='30' r='15' fill='%232f7d72'/%3E%3Cpath d='M15 76c4-18 16-28 25-28s21 10 25 28' fill='%232f7d72'/%3E%3C/svg%3E";
 
@@ -54,6 +56,7 @@ if (!params.has("room") && !params.has("roomId") && window.parent === window) {
   history.replaceState({}, "", `?room=${encodeURIComponent(roomId)}`);
 }
 
+applyProfileFromUrl();
 renderProfile();
 renderRoomLabel();
 start();
@@ -136,6 +139,11 @@ elements.saveName.addEventListener("click", () => {
 });
 
 elements.shareRoom.addEventListener("click", async () => {
+  if (transport === "gravity-unavailable") {
+    showToast("Gravity側のURL許可が必要です");
+    return;
+  }
+
   if (transport === "gravity") {
     await ensureGravityRoom(true);
     if (gravityRoomReady) return;
@@ -160,13 +168,29 @@ async function start() {
   addOrRefreshMember(you);
   renderRoster();
   const gravityReady = await setupGravity();
-  if (!gravityReady) connectWebSocket();
+  if (gravityReady) return;
+
+  if (isLocalDev) {
+    connectWebSocket();
+    return;
+  }
+
+  transport = "gravity-unavailable";
+  if (isGravityFrame) {
+    setConnection("連携不可", false);
+    elements.gravityStatus.textContent = "Gravityがこの配信URLを許可していません";
+    showToast("Gravity連携が許可されていません");
+  } else {
+    setConnection("Gravity外", false);
+    elements.gravityStatus.textContent = "Gravity内で開くとユーザー情報を使えます";
+  }
 }
 
 async function setupGravity() {
-  if (window.parent === window) return false;
+  if (!isGravityFrame) return false;
 
   try {
+    setConnection("Gravity確認中", false);
     const userResult = await gravity.call("AgentSDK.user.getMyUserInfo", {}, 1200);
     const profile = userResult?.data || userResult?.payload?.data;
     if (profile) {
@@ -194,8 +218,8 @@ async function setupGravity() {
       showToast("共有ボタンでGravityルームを作成できます");
     }
     return true;
-  } catch {
-    elements.gravityStatus.textContent = "ローカル表示名を使用中";
+  } catch (error) {
+    console.warn("Gravity SDK bridge is unavailable", error);
     return false;
   }
 }
@@ -475,6 +499,21 @@ function publicMember(member) {
     avatar: member.avatar || "",
     gravityUserId: member.gravityUserId || "",
   };
+}
+
+function applyProfileFromUrl() {
+  const name = params.get("name") || params.get("nickname") || params.get("userName");
+  const avatar = params.get("avatar") || params.get("portrait") || params.get("icon");
+  const gravityUserId = params.get("user_id") || params.get("uid") || params.get("userId");
+
+  if (!name && !avatar && !gravityUserId) return;
+  you = {
+    ...you,
+    name: name || you.name,
+    avatar: avatar || you.avatar,
+    gravityUserId: gravityUserId || you.gravityUserId,
+  };
+  localStorage.setItem("gravity-watch-profile", JSON.stringify(you));
 }
 
 function renderProfile() {
