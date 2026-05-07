@@ -36,8 +36,10 @@ let you = JSON.parse(localStorage.getItem("gravity-watch-profile") || "null") ||
 const gravity = createGravityBridge();
 
 const elements = {
+  chatPane: document.querySelector("#chatPane"),
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
+  chatTab: document.querySelector("#chatTab"),
   connectionStatus: document.querySelector("#connectionStatus"),
   createPrivateRoom: document.querySelector("#createPrivateRoom"),
   createPublicRoom: document.querySelector("#createPublicRoom"),
@@ -57,9 +59,13 @@ const elements = {
   pauseButton: document.querySelector("#pauseButton"),
   playButton: document.querySelector("#playButton"),
   playlist: document.querySelector("#playlist"),
+  playlistPane: document.querySelector("#playlistPane"),
+  playlistTab: document.querySelector("#playlistTab"),
   playlistCount: document.querySelector("#playlistCount"),
   poster: document.querySelector("#poster"),
   profileAvatar: document.querySelector("#profileAvatar"),
+  privateModeButton: document.querySelector("#privateModeButton"),
+  publicModeButton: document.querySelector("#publicModeButton"),
   roomLabel: document.querySelector("#roomLabel"),
   roomScreen: document.querySelector("#roomScreen"),
   requestSyncButton: document.querySelector("#requestSyncButton"),
@@ -164,6 +170,23 @@ document.querySelectorAll(".reaction-btn").forEach((button) => {
   });
 });
 
+let selectedRoomPermission = 0;
+
+elements.publicModeButton.addEventListener("click", () => {
+  selectedRoomPermission = 0;
+  elements.publicModeButton.classList.add("active");
+  elements.privateModeButton.classList.remove("active");
+});
+
+elements.privateModeButton.addEventListener("click", () => {
+  selectedRoomPermission = 1;
+  elements.privateModeButton.classList.add("active");
+  elements.publicModeButton.classList.remove("active");
+});
+
+elements.chatTab.addEventListener("click", () => showTab("chat"));
+elements.playlistTab.addEventListener("click", () => showTab("playlist"));
+
 elements.saveName.addEventListener("click", () => {
   const nextName = elements.displayName.value.trim().slice(0, 24);
   if (!nextName) return;
@@ -176,7 +199,7 @@ elements.saveName.addEventListener("click", () => {
 });
 
 elements.createPublicRoom.addEventListener("click", () => {
-  ensureGravityRoom(true, 0);
+  ensureGravityRoom(true, selectedRoomPermission);
 });
 
 elements.createPrivateRoom.addEventListener("click", () => {
@@ -1098,11 +1121,11 @@ function renderPlaylist() {
 function updateHostControls() {
   elements.hostBadge.classList.toggle("show", isHost);
   elements.guestCover.classList.toggle("active", !isHost);
+  document.querySelector(".host-actions").style.display = isHost ? "flex" : "none";
+  document.querySelector(".guest-actions").style.display = isHost ? "none" : "flex";
   elements.playButton.disabled = !isHost;
   elements.pauseButton.disabled = !isHost;
   elements.syncButton.disabled = !isHost;
-  elements.skipButton.style.display = isHost ? "inline-flex" : "none";
-  elements.requestSyncButton.style.display = isHost ? "none" : "inline-flex";
 }
 
 function showFloatingReaction(emoji) {
@@ -1113,6 +1136,14 @@ function showFloatingReaction(emoji) {
   node.style.left = `${10 + Math.random() * 80}%`;
   layer.append(node);
   setTimeout(() => node.remove(), 2000);
+}
+
+function showTab(tab) {
+  const isPlaylist = tab === "playlist";
+  elements.chatTab.classList.toggle("active", !isPlaylist);
+  elements.playlistTab.classList.toggle("active", isPlaylist);
+  elements.chatPane.classList.toggle("active", !isPlaylist);
+  elements.playlistPane.classList.toggle("active", isPlaylist);
 }
 
 function makeChat(text) {

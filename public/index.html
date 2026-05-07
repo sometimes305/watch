@@ -10,13 +10,13 @@
   <body>
     <main class="app-shell">
       <section id="lobbyScreen" class="screen active">
-        <div class="lobby-header">
+        <div class="lobby-hero">
           <p class="eyebrow">Gravity Watch</p>
           <h1>Watch Party</h1>
           <p>Gravityの友だちとYouTubeを同時視聴</p>
         </div>
 
-        <section class="profile-card">
+        <section class="profile-card lobby-profile">
           <div class="gravity-profile">
             <img id="profileAvatar" alt="" />
             <div>
@@ -32,31 +32,32 @@
 
         <section class="lobby-card">
           <h2>ルームを作成</h2>
-          <div class="lobby-actions">
-            <button id="createPublicRoom" class="primary-action" type="button">公開ルーム作成</button>
-            <button id="createPrivateRoom" type="button">プライベート作成</button>
+          <div class="privacy-toggle" role="group" aria-label="公開設定">
+            <button id="publicModeButton" class="segmented active" type="button">公開</button>
+            <button id="privateModeButton" class="segmented" type="button">プライベート</button>
           </div>
+          <button id="createPublicRoom" class="primary-action create-room-button" type="button">ルームを作る</button>
+          <button id="createPrivateRoom" class="visually-hidden" type="button">プライベート作成</button>
         </section>
 
         <section class="lobby-card">
-          <h2>ルームに参加</h2>
+          <h2>ルームIDで参加</h2>
           <div class="join-row">
             <input id="joinRoomId" inputmode="numeric" placeholder="ルームID" autocomplete="off" />
             <button id="joinRoomButton" type="button">参加</button>
           </div>
         </section>
 
-        <p class="lobby-note">作成したルームIDをGravityで共有すると、相手はID入力で参加できます。</p>
+        <p class="lobby-note">作成後に表示されるルームIDをGravityで共有してください。</p>
       </section>
 
-      <section id="roomScreen" class="screen">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Room <span id="currentRoomId">----</span></p>
-            <h1>Watch Party</h1>
+      <section id="roomScreen" class="screen room-screen">
+        <header class="room-header">
+          <div class="room-meta">
+            <span id="hostBadge" class="host-badge">HOST</span>
+            <span>Room <strong id="currentRoomId">----</strong></span>
           </div>
           <div class="room-actions">
-            <span id="hostBadge" class="host-badge">HOST</span>
             <span id="connectionStatus" class="status-dot">接続中</span>
             <button id="shareRoom" class="icon-button" type="button" title="ルーム招待">↗</button>
           </div>
@@ -68,7 +69,7 @@
               <img id="poster" alt="" src="https://img.youtube.com/vi/jNQXAC9IVRw/maxresdefault.jpg" />
               <div class="empty-copy">
                 <span>ルーム準備完了</span>
-                <strong>YouTube URLを貼って開始</strong>
+                <strong>YouTube URLを追加して開始</strong>
               </div>
             </div>
             <div id="player"></div>
@@ -77,22 +78,26 @@
 
           <div class="status-bar">
             <span id="statusText">動画を追加してください</span>
-            <div class="status-actions">
-              <button id="requestSyncButton" type="button">同期</button>
+            <div class="status-actions host-actions">
+              <button id="playButton" type="button">再生</button>
+              <button id="pauseButton" type="button">停止</button>
+              <button id="syncButton" type="button">位置同期</button>
               <button id="skipButton" type="button">スキップ</button>
+            </div>
+            <div class="status-actions guest-actions">
+              <button id="requestSyncButton" type="button">ホストに同期</button>
             </div>
           </div>
 
+          <div class="members-strip">
+            <div id="members" class="members"></div>
+            <span id="memberCount">0</span>
+          </div>
+
           <form id="videoForm" class="control-strip">
-            <input id="videoUrl" type="url" inputmode="url" placeholder="YouTube URL" autocomplete="off" />
+            <input id="videoUrl" type="url" inputmode="url" placeholder="YouTube URLを追加" autocomplete="off" />
             <button type="submit">追加</button>
           </form>
-
-          <div class="sync-controls">
-            <button id="playButton" type="button">再生</button>
-            <button id="pauseButton" type="button">停止</button>
-            <button id="syncButton" type="button">位置同期</button>
-          </div>
 
           <div class="reaction-bar">
             <button class="reaction-btn" type="button" data-emoji="😂">😂</button>
@@ -103,32 +108,27 @@
           </div>
         </section>
 
-        <section class="party-section members-section">
-          <div class="section-title">
-            <h2>参加者</h2>
-            <span id="memberCount">0</span>
+        <section class="tab-panel">
+          <div class="tabs" role="tablist">
+            <button id="chatTab" class="tab active" type="button" data-tab="chat">チャット</button>
+            <button id="playlistTab" class="tab" type="button" data-tab="playlist">プレイリスト <span id="playlistCount">0</span></button>
           </div>
-          <div id="members" class="members"></div>
-        </section>
 
-        <section class="party-section playlist-section">
-          <div class="section-title">
-            <h2>プレイリスト</h2>
-            <span id="playlistCount">0</span>
+          <div id="chatPane" class="tab-pane active">
+            <div class="section-title compact">
+              <h2>チャット</h2>
+              <span id="videoTitle">未選択</span>
+            </div>
+            <div id="messages" class="messages"></div>
+            <form id="chatForm" class="chat-form">
+              <input id="chatInput" maxlength="500" placeholder="メッセージを書く" autocomplete="off" />
+              <button type="submit">送信</button>
+            </form>
           </div>
-          <ul id="playlist" class="playlist"></ul>
-        </section>
 
-        <section class="party-section chat-section">
-          <div class="section-title">
-            <h2>チャット</h2>
-            <span id="videoTitle">未選択</span>
+          <div id="playlistPane" class="tab-pane">
+            <ul id="playlist" class="playlist"></ul>
           </div>
-          <div id="messages" class="messages"></div>
-          <form id="chatForm" class="chat-form">
-            <input id="chatInput" maxlength="500" placeholder="リアクションを書く" autocomplete="off" />
-            <button type="submit">送信</button>
-          </form>
         </section>
 
         <div class="room-footer">
