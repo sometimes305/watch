@@ -14,6 +14,7 @@ let suppressEvents = false;
 let transport = "pending";
 let gravityRoomReady = false;
 let isHost = false;
+let preferGravityBridge = false;
 let presenceTimer;
 let currentState = { videoId: "", title: "", time: 0, playing: false };
 let messages = [];
@@ -292,7 +293,7 @@ async function ensureGravityRoom(showInvite, permission = 0) {
     const result = await gravity.room(
       "create_room",
       { room_type: "aitools_game_room", max_players: 20, maxplayers: 20, room_permission: permission, permission },
-      3000,
+      1200,
     );
     if (isErrorResult(result)) throw new Error(result.errmsg || `errno ${result.errno}`);
     const roomData = result?.data || result || {};
@@ -315,7 +316,7 @@ async function joinGravityRoom(id, options = {}) {
     transport = "gravity";
     setConnection("参加中", false);
     roomId = id;
-    const joinResult = await gravity.room("join_room", { room_id: roomId }, 3000);
+    const joinResult = await gravity.room("join_room", { room_id: roomId }, 1200);
     if (isErrorResult(joinResult)) throw new Error(joinResult.errmsg || `errno ${joinResult.errno}`);
     addUsersFromRoomResult(joinResult);
     isHost = false;
@@ -475,9 +476,9 @@ async function sendGravityEnvelope(envelope) {
     message,
   };
   try {
-    return await gravity.room("send_msg", payload, 1800);
+    return await gravity.room("send_msg", payload, 700);
   } catch (error) {
-    return gravity.room("send_message", payload, 1800);
+    return gravity.room("send_message", payload, 700);
   }
 }
 
@@ -495,7 +496,7 @@ function handleGravityEnvelope(envelope) {
   seenGravityMessages.add(envelope.id);
   if (envelope.member) addOrRefreshMember(envelope.member);
   renderRoster();
-  handleRoomEvent({ ...envelope.payload, actor: envelope.member?.name || "member" });
+  handleRoomEvent({ ...envelope.payload, actor: envelope.member?.name || "member", sentAt: envelope.sentAt });
 }
 
 function handleRoomEvent(event) {
@@ -505,17 +506,26 @@ function handleRoomEvent(event) {
     return;
   }
   if (event.type === "loadVideo" || event.type === "stateSnapshot") {
-    currentState = { ...event.state, updatedAt: Date.now() };
+    currentState = compensateRemoteState(event.state, event.sentAt);
     applyState(currentState, event.type === "stateSnapshot");
     return;
   }
   if (event.type === "playerAction" || event.type === "seek") {
-    currentState = { ...event.state, updatedAt: Date.now() };
+    currentState = compensateRemoteState(event.state, event.sentAt);
     applyState(currentState, true);
     if (event.actor) showToast(`${event.actor} が同期しました`);
     return;
   }
   if (event.type === "chat") appendMessage(event.message);
+}
+
+function compensateRemoteState(state, sentAt) {
+  const next = { ...state, updatedAt: Date.now() };
+  if (next.playing && sentAt) {
+    const lagSeconds = Math.max(0, Math.min(3, (Date.now() - Number(sentAt)) / 1000));
+    next.time = Math.max(0, Number(next.time || 0) + lagSeconds);
+  }
+  return next;
 }
 
 function handleGravityPlatformEvent(event) {
@@ -680,6 +690,7 @@ function createGravityBridge() {
     },
     room(action, params = {}, timeout = 1500) {
       if (!isGravityFrame) return Promise.reject(new Error("Gravity loader is not available"));
+      if (preferGravityBridge) return postRoom(action, params, timeout);
       const api = sdk();
       if (api?.room) {
         if (action === "create_room") {
@@ -692,18 +703,21 @@ function createGravityBridge() {
             "create_room",
           ).catch((error) => {
             console.warn("Direct create_room failed, falling back to bridge", error);
+            preferGravityBridge = true;
             return postRoom(action, params, timeout);
           });
         }
         if (action === "join_room") {
           return withTimeout(api.room.join({ room_id: params.room_id }), timeout, "join_room").catch((error) => {
             console.warn("Direct join_room failed, falling back to bridge", error);
+            preferGravityBridge = true;
             return postRoom(action, params, timeout);
           });
         }
         if (action === "send_msg" || action === "send_message") {
           return withTimeout(api.room.sendMessage({ message: params.message || params.msg_data || "" }), timeout, "send_msg").catch((error) => {
             console.warn("Direct send_msg failed, falling back to bridge", error);
+            preferGravityBridge = true;
             return postRoom(action, params, timeout);
           });
         }
