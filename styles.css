@@ -176,29 +176,6 @@ h2 {
   grid-template-columns: 1fr 74px;
 }
 
-.privacy-toggle {
-  background: #111;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin-bottom: 10px;
-  padding: 4px;
-}
-
-.segmented {
-  background: transparent;
-  border: 0;
-  color: var(--muted);
-  min-height: 36px;
-}
-
-.segmented.active {
-  background: var(--panel-2);
-  color: var(--ink);
-}
-
 .create-room-button {
   width: 100%;
 }

@@ -42,7 +42,6 @@ const elements = {
   chatTab: document.querySelector("#chatTab"),
   connectionStatus: document.querySelector("#connectionStatus"),
   createPrivateRoom: document.querySelector("#createPrivateRoom"),
-  createPublicRoom: document.querySelector("#createPublicRoom"),
   currentRoomId: document.querySelector("#currentRoomId"),
   displayName: document.querySelector("#displayName"),
   emptyState: document.querySelector("#emptyState"),
@@ -64,8 +63,6 @@ const elements = {
   playlistCount: document.querySelector("#playlistCount"),
   poster: document.querySelector("#poster"),
   profileAvatar: document.querySelector("#profileAvatar"),
-  privateModeButton: document.querySelector("#privateModeButton"),
-  publicModeButton: document.querySelector("#publicModeButton"),
   roomLabel: document.querySelector("#roomLabel"),
   roomScreen: document.querySelector("#roomScreen"),
   requestSyncButton: document.querySelector("#requestSyncButton"),
@@ -130,7 +127,9 @@ elements.chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = elements.chatInput.value.trim();
   if (!text) return;
-  sendRoomEvent({ type: "chat", message: makeChat(text) });
+  const message = makeChat(text);
+  appendMessage(message);
+  sendRoomEvent({ type: "chat", message, skipLocal: true });
   elements.chatInput.value = "";
 });
 
@@ -170,20 +169,6 @@ document.querySelectorAll(".reaction-btn").forEach((button) => {
   });
 });
 
-let selectedRoomPermission = 0;
-
-elements.publicModeButton.addEventListener("click", () => {
-  selectedRoomPermission = 0;
-  elements.publicModeButton.classList.add("active");
-  elements.privateModeButton.classList.remove("active");
-});
-
-elements.privateModeButton.addEventListener("click", () => {
-  selectedRoomPermission = 1;
-  elements.privateModeButton.classList.add("active");
-  elements.publicModeButton.classList.remove("active");
-});
-
 elements.chatTab.addEventListener("click", () => showTab("chat"));
 elements.playlistTab.addEventListener("click", () => showTab("playlist"));
 
@@ -196,10 +181,6 @@ elements.saveName.addEventListener("click", () => {
   announcePresence();
   if (transport === "websocket") connectWebSocket(true);
   showToast("表示名を更新しました");
-});
-
-elements.createPublicRoom.addEventListener("click", () => {
-  ensureGravityRoom(true, selectedRoomPermission);
 });
 
 elements.createPrivateRoom.addEventListener("click", () => {
@@ -465,7 +446,7 @@ function sendRoomEvent(payload) {
   if (transport === "gravity") {
     if (!gravityRoomReady) {
       showToast("先に共有ボタンでGravityルームを作成してください");
-      handleRoomEvent({ ...payload, actor: you.name });
+      if (!payload.skipLocal) handleRoomEvent({ ...payload, actor: you.name });
       return;
     }
     const outboundPayload = { ...payload };
