@@ -66,7 +66,6 @@ const elements = {
   roomLabel: document.querySelector("#roomLabel"),
   roomScreen: document.querySelector("#roomScreen"),
   requestSyncButton: document.querySelector("#requestSyncButton"),
-  saveName: document.querySelector("#saveName"),
   shareRoom: document.querySelector("#shareRoom"),
   skipButton: document.querySelector("#skipButton"),
   statusText: document.querySelector("#statusText"),
@@ -171,17 +170,6 @@ document.querySelectorAll(".reaction-btn").forEach((button) => {
 
 elements.chatTab.addEventListener("click", () => showTab("chat"));
 elements.playlistTab.addEventListener("click", () => showTab("playlist"));
-
-elements.saveName.addEventListener("click", () => {
-  const nextName = elements.displayName.value.trim().slice(0, 24);
-  if (!nextName) return;
-  you = { ...you, name: nextName };
-  localStorage.setItem("gravity-watch-profile", JSON.stringify(you));
-  renderProfile();
-  announcePresence();
-  if (transport === "websocket") connectWebSocket(true);
-  showToast("表示名を更新しました");
-});
 
 elements.createPrivateRoom.addEventListener("click", () => {
   ensureGravityRoom(true, 1);
@@ -311,6 +299,7 @@ async function setupGravity() {
 
 async function ensureGravityRoom(showInvite, permission = 0) {
   if (gravityRoomReady) {
+    showRoom();
     if (showInvite) showToast("Gravityのルーム招待を開きました");
     return;
   }
@@ -322,11 +311,10 @@ async function ensureGravityRoom(showInvite, permission = 0) {
     const result = await gravity.room(
       "create_room",
       { room_type: "aitools_game_room", max_players: 20, maxplayers: 20, room_permission: permission, permission },
-      1200,
+      3500,
     );
     if (isErrorResult(result)) throw new Error(result.errmsg || `errno ${result.errno}`);
-    const roomData = result?.data || result || {};
-    const createdRoomId = roomData.room_id || roomData.roomId || "";
+    const createdRoomId = extractRoomId(result);
     if (!createdRoomId) throw new Error("room_id が返りませんでした");
     if (createdRoomId) roomId = createdRoomId;
     isHost = true;
@@ -791,7 +779,7 @@ function createGravityBridge() {
       const entry = pendingRoom.get(roomId);
       pendingRoom.delete(roomId);
       clearTimeout(entry.timer);
-      const result = data.result || {};
+      const result = data.result || data.payload || data.data || {};
       if (result.errno !== undefined && result.errno !== 0) {
         entry.reject(new Error(result.errmsg || `Gravity room error ${result.errno}`));
       } else {
@@ -984,6 +972,22 @@ function isErrorResult(result) {
   return result && typeof result === "object" && result.errno !== undefined && Number(result.errno) !== 0;
 }
 
+function extractRoomId(result) {
+  const candidates = [
+    result?.data,
+    result?.payload?.data,
+    result?.payload,
+    result?.result?.data,
+    result?.result,
+    result,
+  ];
+  for (const item of candidates) {
+    const id = item?.room_id || item?.roomId || item?.roomid || item?.id;
+    if (id) return String(id);
+  }
+  return "";
+}
+
 function applyProfileFromUrl() {
   const name = params.get("username") || params.get("name") || params.get("nickname") || params.get("userName");
   const rawAvatar =
@@ -1007,7 +1011,7 @@ function applyProfileFromUrl() {
 }
 
 function renderProfile() {
-  elements.displayName.value = you.name;
+  elements.displayName.textContent = you.name;
   elements.profileAvatar.src = you.avatar || defaultAvatar;
 }
 

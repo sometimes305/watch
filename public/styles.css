@@ -153,12 +153,24 @@ h2 {
   width: 42px;
 }
 
-.profile-card label {
+.profile-label {
   color: var(--muted);
   display: block;
   font-size: 12px;
   font-weight: 800;
   margin-bottom: 2px;
+}
+
+.profile-name {
+  color: var(--ink);
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
 }
 
 #gravityStatus {
@@ -167,7 +179,6 @@ h2 {
   font-size: 11px;
 }
 
-.name-row,
 .join-row,
 .control-strip,
 .chat-form {
