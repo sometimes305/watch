@@ -649,6 +649,18 @@ function createGravityBridge() {
     ]);
   }
 
+  function postRoom(action, params = {}, timeout = 1500) {
+    const actionId = `${action}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingRoom.delete(actionId);
+        reject(new Error(`${action} bridge timeout`));
+      }, timeout);
+      pendingRoom.set(actionId, { resolve, reject, timer });
+      window.parent.postMessage({ action, actionId, actionld: actionId, ...params }, "*");
+    });
+  }
+
   return {
     ready: waitForSdk,
     api(action, params = {}, timeout = 1500) {
@@ -678,30 +690,37 @@ function createGravityBridge() {
             }),
             timeout,
             "create_room",
-          );
+          ).catch((error) => {
+            console.warn("Direct create_room failed, falling back to bridge", error);
+            return postRoom(action, params, timeout);
+          });
         }
         if (action === "join_room") {
-          return withTimeout(api.room.join({ room_id: params.room_id }), timeout, "join_room");
+          return withTimeout(api.room.join({ room_id: params.room_id }), timeout, "join_room").catch((error) => {
+            console.warn("Direct join_room failed, falling back to bridge", error);
+            return postRoom(action, params, timeout);
+          });
         }
         if (action === "send_msg" || action === "send_message") {
-          return withTimeout(api.room.sendMessage({ message: params.message || params.msg_data || "" }), timeout, "send_msg");
+          return withTimeout(api.room.sendMessage({ message: params.message || params.msg_data || "" }), timeout, "send_msg").catch((error) => {
+            console.warn("Direct send_msg failed, falling back to bridge", error);
+            return postRoom(action, params, timeout);
+          });
         }
         if (action === "get_public_rooms") {
-          return withTimeout(api.room.getPublicRoomList(), timeout, "get_public_rooms");
+          return withTimeout(api.room.getPublicRoomList(), timeout, "get_public_rooms").catch((error) => {
+            console.warn("Direct get_public_rooms failed, falling back to bridge", error);
+            return postRoom(action, params, timeout);
+          });
         }
         if (action === "exit_room" && api.room.exit) {
-          return withTimeout(api.room.exit(), timeout, "exit_room");
+          return withTimeout(api.room.exit(), timeout, "exit_room").catch((error) => {
+            console.warn("Direct exit_room failed, falling back to bridge", error);
+            return postRoom(action, params, timeout);
+          });
         }
       }
-      const actionId = `${action}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pendingRoom.delete(actionId);
-          reject(new Error("Gravity room timeout"));
-        }, timeout);
-        pendingRoom.set(actionId, { resolve, reject, timer });
-        window.parent.postMessage({ action, actionId, actionld: actionId, ...params }, "*");
-      });
+      return postRoom(action, params, timeout);
     },
     onRoomMessage(handler) {
       roomHandler = handler;
