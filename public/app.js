@@ -17,6 +17,9 @@ let isHost = false;
 let preferGravityBridge = false;
 let presenceTimer;
 let currentState = { videoId: "", title: "", time: 0, playing: false };
+let playlist = [];
+let currentVideoIndex = -1;
+let hostSyncTimer;
 let messages = [];
 let members = new Map();
 let seenGravityMessages = new Set();
@@ -41,6 +44,7 @@ const elements = {
   displayName: document.querySelector("#displayName"),
   emptyState: document.querySelector("#emptyState"),
   gravityStatus: document.querySelector("#gravityStatus"),
+  guestCover: document.querySelector("#guestCover"),
   hostBadge: document.querySelector("#hostBadge"),
   joinRoomButton: document.querySelector("#joinRoomButton"),
   joinRoomId: document.querySelector("#joinRoomId"),
@@ -51,12 +55,17 @@ const elements = {
   messages: document.querySelector("#messages"),
   pauseButton: document.querySelector("#pauseButton"),
   playButton: document.querySelector("#playButton"),
+  playlist: document.querySelector("#playlist"),
+  playlistCount: document.querySelector("#playlistCount"),
   poster: document.querySelector("#poster"),
   profileAvatar: document.querySelector("#profileAvatar"),
   roomLabel: document.querySelector("#roomLabel"),
   roomScreen: document.querySelector("#roomScreen"),
+  requestSyncButton: document.querySelector("#requestSyncButton"),
   saveName: document.querySelector("#saveName"),
   shareRoom: document.querySelector("#shareRoom"),
+  skipButton: document.querySelector("#skipButton"),
+  statusText: document.querySelector("#statusText"),
   syncButton: document.querySelector("#syncButton"),
   toast: document.querySelector("#toast"),
   videoForm: document.querySelector("#videoForm"),
@@ -101,7 +110,7 @@ elements.videoForm.addEventListener("submit", async (event) => {
     return;
   }
   const title = await resolveTitle(videoId);
-  sendRoomEvent({ type: "loadVideo", state: { videoId, title, time: 0, playing: false } });
+  addVideoToPlaylist({ id: videoId, title, addedBy: you.name });
   elements.videoUrl.value = "";
 });
 
@@ -114,28 +123,38 @@ elements.chatForm.addEventListener("submit", (event) => {
 });
 
 elements.playButton.addEventListener("click", () => {
+  if (!isHost) return showToast("再生操作はホストのみです");
   if (!playerReady || !currentState.videoId) return;
   player.playVideo();
-  sendRoomEvent({
-    type: "playerAction",
-    state: { ...currentState, time: player.getCurrentTime(), playing: true },
-  });
+  broadcastPlayerControl("PLAYING", player.getCurrentTime());
 });
 
 elements.pauseButton.addEventListener("click", () => {
+  if (!isHost) return showToast("停止操作はホストのみです");
   if (!playerReady || !currentState.videoId) return;
   player.pauseVideo();
-  sendRoomEvent({
-    type: "playerAction",
-    state: { ...currentState, time: player.getCurrentTime(), playing: false },
-  });
+  broadcastPlayerControl("PAUSED", player.getCurrentTime());
 });
 
 elements.syncButton.addEventListener("click", () => {
-  if (!playerReady || !currentState.videoId) return;
-  sendRoomEvent({
-    type: "seek",
-    state: { ...currentState, time: player.getCurrentTime(), playing: currentState.playing },
+  if (!isHost) return showToast("位置同期はホストのみです");
+  broadcastFullState();
+});
+
+elements.requestSyncButton.addEventListener("click", () => {
+  showToast("同期をリクエストしました");
+  sendRoomEvent({ type: "REQ_SYNC" });
+});
+
+elements.skipButton.addEventListener("click", () => {
+  if (!isHost) return;
+  playNextVideo();
+});
+
+document.querySelectorAll(".reaction-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    const emoji = button.dataset.emoji;
+    sendRoomEvent({ type: "REACTION", emoji });
   });
 });
 
@@ -340,6 +359,8 @@ async function enableGravityRoom() {
   announcePresence();
   clearInterval(presenceTimer);
   presenceTimer = setInterval(announcePresence, 12000);
+  clearInterval(hostSyncTimer);
+  if (isHost) hostSyncTimer = setInterval(broadcastFullState, 5000);
 }
 
 async function leaveGravityRoom() {
@@ -348,7 +369,10 @@ async function leaveGravityRoom() {
   } finally {
     gravityRoomReady = false;
     isHost = false;
+    clearInterval(hostSyncTimer);
     roomId = params.get("room") || params.get("roomId") || makeRoomId();
+    playlist = [];
+    currentVideoIndex = -1;
     members.clear();
     messages = [];
     renderMessages(messages);
@@ -415,14 +439,16 @@ function sendRoomEvent(payload) {
       handleRoomEvent({ ...payload, actor: you.name });
       return;
     }
+    const outboundPayload = { ...payload };
+    delete outboundPayload.skipLocal;
     const envelope = {
       app: "gravity-watch-party",
       id: crypto.randomUUID(),
       member: publicMember(you),
       sentAt: Date.now(),
-      payload,
+      payload: outboundPayload,
     };
-    handleGravityEnvelope(envelope);
+    if (!payload.skipLocal) handleGravityEnvelope(envelope);
     sendGravityEnvelope(envelope).catch(() => {
       showToast("Gravityルームへの送信に失敗しました");
     });
@@ -449,9 +475,7 @@ function sendRoomEvent(payload) {
 
 function broadcastCurrentState() {
   announcePresence();
-  if (currentState.videoId) {
-    sendRoomEvent({ type: "stateSnapshot", state: currentState });
-  }
+  broadcastFullState();
 }
 
 function announcePresence() {
@@ -502,7 +526,34 @@ function handleGravityEnvelope(envelope) {
 function handleRoomEvent(event) {
   if (event.type === "presence") return;
   if (event.type === "REQ_SYNC") {
-    if (isHost) broadcastCurrentState();
+    if (isHost) broadcastFullState();
+    return;
+  }
+  if (event.type === "ADD_VIDEO") {
+    playlist.push(event.video);
+    renderPlaylist();
+    appendSystemMessage(`${event.video.addedBy || "member"} が動画を追加`);
+    if (isHost && currentVideoIndex === -1 && playlist.length === 1) playVideoAtIndex(0);
+    return;
+  }
+  if (event.type === "REMOVE_VIDEO") {
+    removeVideoAtIndex(event.index, false);
+    return;
+  }
+  if (event.type === "SYNC_STATE") {
+    if (!isHost) handleHostSync(event.state, event.sentAt);
+    return;
+  }
+  if (event.type === "PLAYER_CONTROL") {
+    if (!isHost) handleHostControl(event.action, event.time, event.sentAt);
+    return;
+  }
+  if (event.type === "REACTION") {
+    showFloatingReaction(event.emoji);
+    return;
+  }
+  if (event.type === "CHAT") {
+    appendMessage({ name: event.senderName || event.actor || "member", color: colors[0], text: event.text });
     return;
   }
   if (event.type === "loadVideo" || event.type === "stateSnapshot") {
@@ -528,6 +579,117 @@ function compensateRemoteState(state, sentAt) {
   return next;
 }
 
+function addVideoToPlaylist(video) {
+  playlist.push(video);
+  renderPlaylist();
+  appendSystemMessage("動画を追加しました");
+  sendRoomEvent({ type: "ADD_VIDEO", video, skipLocal: true });
+  if (isHost && currentVideoIndex === -1 && playlist.length === 1) playVideoAtIndex(0);
+}
+
+function removeVideoAtIndex(index, shouldBroadcast = true) {
+  if (index < 0 || index >= playlist.length) return;
+  playlist.splice(index, 1);
+  if (currentVideoIndex > index) currentVideoIndex -= 1;
+  else if (currentVideoIndex === index && isHost) playNextVideo();
+  else renderPlaylist();
+  if (shouldBroadcast) sendRoomEvent({ type: "REMOVE_VIDEO", index, skipLocal: true });
+}
+
+function playVideoAtIndex(index) {
+  if (!isHost || !playerReady) return;
+  if (index >= 0 && index < playlist.length) {
+    const video = playlist[index];
+    currentVideoIndex = index;
+    currentState = { videoId: video.id, title: video.title, time: 0, playing: true, updatedAt: Date.now() };
+    elements.statusText.textContent = `再生中: ${video.title}`;
+    elements.videoTitle.textContent = video.title;
+    elements.emptyState.classList.add("hidden");
+    elements.poster.src = `https://img.youtube.com/vi/${video.id}/maxresdefault.jpg`;
+    player.loadVideoById(video.id);
+    renderPlaylist();
+    broadcastFullState();
+    return;
+  }
+
+  currentVideoIndex = -1;
+  currentState = { videoId: "", title: "", time: 0, playing: false, updatedAt: Date.now() };
+  elements.statusText.textContent = "プレイリスト終了";
+  if (playerReady) player.stopVideo();
+  renderPlaylist();
+  broadcastFullState();
+}
+
+function playNextVideo() {
+  if (isHost) playVideoAtIndex(currentVideoIndex + 1);
+}
+
+function broadcastFullState() {
+  if (!isHost) return;
+  let playerState = -1;
+  let currentTime = currentState.time || 0;
+  if (playerReady && player?.getPlayerState) {
+    playerState = player.getPlayerState();
+    currentTime = player.getCurrentTime();
+  }
+  const state = {
+    playlist,
+    currentIndex: currentVideoIndex,
+    playerState,
+    currentTime,
+    currentVideo: playlist[currentVideoIndex] || null,
+  };
+  sendRoomEvent({ type: "SYNC_STATE", state });
+}
+
+function broadcastPlayerControl(action, time) {
+  if (!isHost) return;
+  currentState = { ...currentState, time, playing: action === "PLAYING", updatedAt: Date.now() };
+  sendRoomEvent({ type: "PLAYER_CONTROL", action, time });
+}
+
+function handleHostSync(state, sentAt) {
+  if (!state) return;
+  playlist = Array.isArray(state.playlist) ? state.playlist : [];
+  currentVideoIndex = Number.isInteger(state.currentIndex) ? state.currentIndex : -1;
+  renderPlaylist();
+
+  const video = playlist[currentVideoIndex];
+  if (video) {
+    const lagSeconds = state.playerState === YT.PlayerState.PLAYING && sentAt
+      ? Math.max(0, Math.min(3, (Date.now() - Number(sentAt)) / 1000))
+      : 0;
+    currentState = {
+      videoId: video.id,
+      title: video.title,
+      time: Number(state.currentTime || 0) + lagSeconds,
+      playing: state.playerState === YT.PlayerState.PLAYING,
+      updatedAt: Date.now(),
+    };
+    elements.statusText.textContent = `ホストが再生中: ${video.title}`;
+    applyState(currentState, true);
+  } else {
+    currentState = { videoId: "", title: "", time: 0, playing: false, updatedAt: Date.now() };
+    elements.statusText.textContent = "待機中";
+    if (playerReady) player.stopVideo();
+  }
+}
+
+function handleHostControl(action, time, sentAt) {
+  if (!playerReady || !currentState.videoId) return;
+  const lagSeconds = action === "PLAYING" && sentAt ? Math.max(0, Math.min(3, (Date.now() - Number(sentAt)) / 1000)) : 0;
+  const targetTime = Number(time || 0) + lagSeconds;
+  if (action === "PLAYING") {
+    if (Math.abs(player.getCurrentTime() - targetTime) > 1) player.seekTo(targetTime, true);
+    player.playVideo();
+    currentState = { ...currentState, time: targetTime, playing: true };
+  } else if (action === "PAUSED") {
+    player.pauseVideo();
+    player.seekTo(targetTime, true);
+    currentState = { ...currentState, time: targetTime, playing: false };
+  }
+}
+
 function handleGravityPlatformEvent(event) {
   const type = event?.type || "";
   const data = event?.data || {};
@@ -548,6 +710,7 @@ function handleGravityPlatformEvent(event) {
 function applyState(state, preservePlayback) {
   currentState = state;
   elements.videoTitle.textContent = state.title || "未選択";
+  elements.statusText.textContent = state.title ? `${state.playing ? "再生中" : "待機中"}: ${state.title}` : "動画を追加してください";
   elements.emptyState.classList.toggle("hidden", Boolean(state.videoId));
 
   if (state.videoId) {
@@ -575,18 +738,16 @@ function applyState(state, preservePlayback) {
 }
 
 function onPlayerStateChange(event) {
-  if (suppressEvents || !currentState.videoId) return;
+  if (suppressEvents || !currentState.videoId || !isHost) return;
+  if (event.data === YT.PlayerState.ENDED) {
+    playNextVideo();
+    return;
+  }
   if (event.data === YT.PlayerState.PLAYING) {
-    sendRoomEvent({
-      type: "playerAction",
-      state: { ...currentState, time: player.getCurrentTime(), playing: true },
-    });
+    broadcastPlayerControl("PLAYING", player.getCurrentTime());
   }
   if (event.data === YT.PlayerState.PAUSED) {
-    sendRoomEvent({
-      type: "playerAction",
-      state: { ...currentState, time: player.getCurrentTime(), playing: false },
-    });
+    broadcastPlayerControl("PAUSED", player.getCurrentTime());
   }
 }
 
@@ -776,7 +937,7 @@ function memberFromGravityUser(user) {
     id: String(user.user_id || user.uid || user.id || user.user_name || user.name || crypto.randomUUID()),
     name: user.name || user.nickname || user.user_name || user.username || "guest",
     color: colors[Math.floor(Math.random() * colors.length)],
-    avatar: user.portrait || user.avatar || user.icon || user.head_img || user.headimgurl || user.profile_image || "",
+    avatar: user.portrait || user.portait || user.avatar || user.icon || user.head_img || user.headimgurl || user.profile_image || "",
     gravityUserId: String(user.user_id || user.uid || user.id || ""),
   };
 }
@@ -864,6 +1025,8 @@ function showRoom() {
   elements.currentRoomId.textContent = roomId || "----";
   elements.joinRoomId.value = "";
   elements.hostBadge.classList.toggle("show", isHost);
+  updateHostControls();
+  renderPlaylist();
 }
 
 function renderMessages(nextMessages) {
@@ -886,6 +1049,56 @@ function appendMessage(message) {
   node.append(name, text);
   elements.messages.append(node);
   elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function appendSystemMessage(text) {
+  appendMessage({ name: "system", color: "#ffd85a", text });
+}
+
+function renderPlaylist() {
+  elements.playlistCount.textContent = String(playlist.length);
+  elements.playlist.replaceChildren(
+    ...playlist.map((video, index) => {
+      const item = document.createElement("li");
+      item.className = `playlist-item${index === currentVideoIndex ? " playing" : ""}`;
+      const info = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "playlist-title";
+      title.textContent = video.title || video.id;
+      const adder = document.createElement("div");
+      adder.className = "playlist-adder";
+      adder.textContent = `追加: ${video.addedBy || "member"}`;
+      info.append(title, adder);
+      const remove = document.createElement("button");
+      remove.className = "playlist-remove";
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.title = "削除";
+      remove.addEventListener("click", () => removeVideoAtIndex(index));
+      item.append(info, remove);
+      return item;
+    }),
+  );
+}
+
+function updateHostControls() {
+  elements.hostBadge.classList.toggle("show", isHost);
+  elements.guestCover.classList.toggle("active", !isHost);
+  elements.playButton.disabled = !isHost;
+  elements.pauseButton.disabled = !isHost;
+  elements.syncButton.disabled = !isHost;
+  elements.skipButton.style.display = isHost ? "inline-flex" : "none";
+  elements.requestSyncButton.style.display = isHost ? "none" : "inline-flex";
+}
+
+function showFloatingReaction(emoji) {
+  const layer = document.querySelector("#reactionLayer");
+  const node = document.createElement("div");
+  node.className = "floating-emoji";
+  node.textContent = emoji;
+  node.style.left = `${10 + Math.random() * 80}%`;
+  layer.append(node);
+  setTimeout(() => node.remove(), 2000);
 }
 
 function makeChat(text) {

@@ -72,17 +72,34 @@
               </div>
             </div>
             <div id="player"></div>
+            <div id="guestCover" class="guest-cover"></div>
+          </div>
+
+          <div class="status-bar">
+            <span id="statusText">動画を追加してください</span>
+            <div class="status-actions">
+              <button id="requestSyncButton" type="button">同期</button>
+              <button id="skipButton" type="button">スキップ</button>
+            </div>
           </div>
 
           <form id="videoForm" class="control-strip">
             <input id="videoUrl" type="url" inputmode="url" placeholder="YouTube URL" autocomplete="off" />
-            <button type="submit">読込</button>
+            <button type="submit">追加</button>
           </form>
 
           <div class="sync-controls">
             <button id="playButton" type="button">再生</button>
             <button id="pauseButton" type="button">停止</button>
-            <button id="syncButton" type="button">同期</button>
+            <button id="syncButton" type="button">位置同期</button>
+          </div>
+
+          <div class="reaction-bar">
+            <button class="reaction-btn" type="button" data-emoji="😂">😂</button>
+            <button class="reaction-btn" type="button" data-emoji="👍">👍</button>
+            <button class="reaction-btn" type="button" data-emoji="❤️">❤️</button>
+            <button class="reaction-btn" type="button" data-emoji="🔥">🔥</button>
+            <button class="reaction-btn" type="button" data-emoji="👀">👀</button>
           </div>
         </section>
 
@@ -92,6 +109,14 @@
             <span id="memberCount">0</span>
           </div>
           <div id="members" class="members"></div>
+        </section>
+
+        <section class="party-section playlist-section">
+          <div class="section-title">
+            <h2>プレイリスト</h2>
+            <span id="playlistCount">0</span>
+          </div>
+          <ul id="playlist" class="playlist"></ul>
         </section>
 
         <section class="party-section chat-section">
@@ -114,6 +139,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="reactionLayer" class="reaction-layer"></div>
     <script src="https://www.youtube.com/iframe_api"></script>
     <script type="module" src="app.js"></script>
   </body>
