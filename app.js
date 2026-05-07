@@ -18,6 +18,7 @@ let currentState = { videoId: "", title: "", time: 0, playing: false };
 let messages = [];
 let members = new Map();
 let seenGravityMessages = new Set();
+let profileLoadedFromUrl = false;
 let you = JSON.parse(localStorage.getItem("gravity-watch-profile") || "null") || {
   id: crypto.randomUUID(),
   name: `guest-${Math.floor(Math.random() * 900 + 100)}`,
@@ -139,12 +140,8 @@ elements.saveName.addEventListener("click", () => {
 });
 
 elements.shareRoom.addEventListener("click", async () => {
-  if (transport === "gravity-unavailable") {
-    showToast("Gravity側のURL許可が必要です");
-    return;
-  }
-
-  if (transport === "gravity") {
+  if (transport === "gravity" || transport === "gravity-unavailable") {
+    transport = "gravity";
     await ensureGravityRoom(true);
     if (gravityRoomReady) return;
   }
@@ -177,9 +174,8 @@ async function start() {
 
   transport = "gravity-unavailable";
   if (isGravityFrame) {
-    setConnection("連携不可", false);
-    elements.gravityStatus.textContent = "Gravityがこの配信URLを許可していません";
-    showToast("Gravity連携が許可されていません");
+    setConnection("Gravity待機", false);
+    elements.gravityStatus.textContent = "共有ボタンでルーム作成を試せます";
   } else {
     setConnection("Gravity外", false);
     elements.gravityStatus.textContent = "Gravity内で開くとユーザー情報を使えます";
@@ -189,24 +185,39 @@ async function start() {
 async function setupGravity() {
   if (!isGravityFrame) return false;
 
+  setConnection("Gravity確認中", false);
+
   try {
-    setConnection("Gravity確認中", false);
-    const userResult = await gravity.api("AgentSDK.user.getMyUserInfo", {}, 1800);
-    const profile = normalizeGravityUser(userResult);
-    if (profile) {
-      you = {
-        ...you,
-        name: profile.name || you.name,
-        avatar: profile.portrait || you.avatar,
-        gravityUserId: String(profile.user_id || profile.uid || you.gravityUserId || ""),
-      };
-      localStorage.setItem("gravity-watch-profile", JSON.stringify(you));
-      renderProfile();
+    if (!profileLoadedFromUrl) {
+      const userResult = await gravity.api("AgentSDK.user.getMyUserInfo", {}, 1800);
+      const profile = normalizeGravityUser(userResult);
+      if (profile) {
+        you = {
+          ...you,
+          name: profile.name || you.name,
+          avatar: profile.portrait || you.avatar,
+          gravityUserId: String(profile.user_id || you.gravityUserId || ""),
+        };
+        localStorage.setItem("gravity-watch-profile", JSON.stringify(you));
+        renderProfile();
+        elements.gravityStatus.textContent = "Gravityユーザー情報を使用中";
+      }
+    } else {
       elements.gravityStatus.textContent = "Gravityユーザー情報を使用中";
     }
+  } catch (error) {
+    console.warn("Gravity user bridge is unavailable; continuing with URL profile", error);
+    if (profileLoadedFromUrl) {
+      elements.gravityStatus.textContent = "Gravityユーザー情報を使用中";
+    } else {
+      elements.gravityStatus.textContent = "表示名を手動で設定できます";
+    }
+  }
 
+  try {
     transport = "gravity";
     setConnection("Gravity接続", true);
+
     const gravityRoomId = params.get("room_id") || params.get("roomid") || params.get("roomId") || "";
     if (gravityRoomId) {
       roomId = gravityRoomId;
@@ -218,7 +229,18 @@ async function setupGravity() {
     }
     return true;
   } catch (error) {
-    console.warn("Gravity SDK bridge is unavailable", error);
+    console.warn("Gravity room bridge is unavailable", error);
+    if (profileLoadedFromUrl) {
+      you = {
+        ...you,
+        name: you.name,
+      };
+      elements.gravityStatus.textContent = "Gravityユーザー情報を使用中";
+      transport = "gravity";
+      setConnection("Gravity待機", false);
+      renderRoomLabel("Gravityルーム未作成");
+      return true;
+    }
     return false;
   }
 }
@@ -574,6 +596,7 @@ function applyProfileFromUrl() {
   const gravityUserId = params.get("user_id") || params.get("uid") || params.get("userId");
 
   if (!name && !avatar && !gravityUserId) return;
+  profileLoadedFromUrl = true;
   you = {
     ...you,
     name: name || you.name,
