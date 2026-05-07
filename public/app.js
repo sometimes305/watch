@@ -288,20 +288,24 @@ async function ensureGravityRoom(showInvite, permission = 0) {
   try {
     transport = "gravity";
     setConnection("作成中", false);
+    showToast("ルームを作成中...");
     const result = await gravity.room(
       "create_room",
       { room_type: "aitools_game_room", max_players: 20, maxplayers: 20, room_permission: permission, permission },
       3000,
     );
+    if (isErrorResult(result)) throw new Error(result.errmsg || `errno ${result.errno}`);
     const roomData = result?.data || result || {};
     const createdRoomId = roomData.room_id || roomData.roomId || "";
+    if (!createdRoomId) throw new Error("room_id が返りませんでした");
     if (createdRoomId) roomId = createdRoomId;
     isHost = true;
     await enableGravityRoom();
     broadcastCurrentState();
     if (showInvite) showToast(`ルームを作成しました: ${roomId}`);
-  } catch {
-    showToast("Gravityルームを作成できませんでした");
+  } catch (error) {
+    console.warn("Create room failed", error);
+    showToast(`作成失敗: ${error.message || "通信エラー"}`);
     showLobby();
   }
 }
@@ -312,6 +316,7 @@ async function joinGravityRoom(id, options = {}) {
     setConnection("参加中", false);
     roomId = id;
     const joinResult = await gravity.room("join_room", { room_id: roomId }, 3000);
+    if (isErrorResult(joinResult)) throw new Error(joinResult.errmsg || `errno ${joinResult.errno}`);
     addUsersFromRoomResult(joinResult);
     isHost = false;
     await enableGravityRoom();
@@ -637,6 +642,13 @@ function createGravityBridge() {
     });
   }
 
+  function withTimeout(promise, timeout, label) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timeout`)), timeout)),
+    ]);
+  }
+
   return {
     ready: waitForSdk,
     api(action, params = {}, timeout = 1500) {
@@ -659,22 +671,26 @@ function createGravityBridge() {
       const api = sdk();
       if (api?.room) {
         if (action === "create_room") {
-          return api.room.create({
-            max_players: params.max_players || params.maxplayers || 20,
-            room_permission: params.room_permission ?? params.permission ?? 0,
-          });
+          return withTimeout(
+            api.room.create({
+              max_players: params.max_players || params.maxplayers || 20,
+              room_permission: params.room_permission ?? params.permission ?? 0,
+            }),
+            timeout,
+            "create_room",
+          );
         }
         if (action === "join_room") {
-          return api.room.join({ room_id: params.room_id });
+          return withTimeout(api.room.join({ room_id: params.room_id }), timeout, "join_room");
         }
         if (action === "send_msg" || action === "send_message") {
-          return api.room.sendMessage({ message: params.message || params.msg_data || "" });
+          return withTimeout(api.room.sendMessage({ message: params.message || params.msg_data || "" }), timeout, "send_msg");
         }
         if (action === "get_public_rooms") {
-          return api.room.getPublicRoomList();
+          return withTimeout(api.room.getPublicRoomList(), timeout, "get_public_rooms");
         }
         if (action === "exit_room" && api.room.exit) {
-          return api.room.exit();
+          return withTimeout(api.room.exit(), timeout, "exit_room");
         }
       }
       const actionId = `${action}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -750,6 +766,10 @@ function normalizeGravityUser(value) {
     portrait: user.portrait || user.avatar || user.icon || user.head_img || user.headimgurl || user.profile_image || "",
     user_id: user.user_id || user.uid || user.id || "",
   };
+}
+
+function isErrorResult(result) {
+  return result && typeof result === "object" && result.errno !== undefined && Number(result.errno) !== 0;
 }
 
 function applyProfileFromUrl() {
