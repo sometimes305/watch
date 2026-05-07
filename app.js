@@ -191,8 +191,8 @@ async function setupGravity() {
 
   try {
     setConnection("Gravity確認中", false);
-    const userResult = await gravity.call("AgentSDK.user.getMyUserInfo", {}, 1200);
-    const profile = userResult?.data || userResult?.payload?.data;
+    const userResult = await gravity.api("AgentSDK.user.getMyUserInfo", {}, 1800);
+    const profile = normalizeGravityUser(userResult);
     if (profile) {
       you = {
         ...you,
@@ -207,11 +207,10 @@ async function setupGravity() {
 
     transport = "gravity";
     setConnection("Gravity接続", true);
-    const room = await gravity.call("AgentSDK.room.getRoomId", {}, 1200);
-    const gravityRoomId = room?.room_id || room?.data?.room_id || "";
+    const gravityRoomId = params.get("room_id") || params.get("roomid") || params.get("roomId") || "";
     if (gravityRoomId) {
       roomId = gravityRoomId;
-      await gravity.call("AgentSDK.room.join", { room_id: roomId, role: 0 }, 1800).catch(() => {});
+      await gravity.room("join_room", { room_id: roomId }, 2500).catch(() => {});
       await enableGravityRoom();
     } else {
       renderRoomLabel("Gravityルーム未作成");
@@ -231,12 +230,13 @@ async function ensureGravityRoom(showInvite) {
   }
 
   try {
-    const result = await gravity.call(
-      "AgentSDK.room.create",
-      { max_players: 20, room_permission: 1 },
+    const result = await gravity.room(
+      "create_room",
+      { room_type: "aitools_game_room", max_players: 20, maxplayers: 20, room_permission: 0, permission: 0 },
       3000,
     );
-    const createdRoomId = result?.data?.room_id || result?.room_id || "";
+    const roomData = result?.data || result || {};
+    const createdRoomId = roomData.room_id || roomData.roomId || "";
     if (createdRoomId) roomId = createdRoomId;
     await enableGravityRoom();
     broadcastCurrentState();
@@ -250,7 +250,6 @@ async function enableGravityRoom() {
   gravityRoomReady = true;
   renderRoomLabel("Gravityルーム");
   gravity.onRoomMessage(handleGravityMessage);
-  await gravity.call("AgentSDK.room.receiveMessage", {}, 1200).catch(() => {});
   announcePresence();
   clearInterval(presenceTimer);
   presenceTimer = setInterval(announcePresence, 12000);
@@ -320,7 +319,7 @@ function sendRoomEvent(payload) {
       payload,
     };
     handleGravityEnvelope(envelope);
-    gravity.call("AgentSDK.room.sendMessage", { message: JSON.stringify(envelope) }, 1200).catch(() => {
+    sendGravityEnvelope(envelope).catch(() => {
       showToast("Gravityルームへの送信に失敗しました");
     });
     return;
@@ -362,7 +361,21 @@ function announcePresence() {
     sentAt: Date.now(),
     payload: { type: "presence" },
   };
-  gravity.call("AgentSDK.room.sendMessage", { message: JSON.stringify(envelope) }, 1200).catch(() => {});
+  sendGravityEnvelope(envelope).catch(() => {});
+}
+
+async function sendGravityEnvelope(envelope) {
+  const message = JSON.stringify(envelope);
+  const payload = {
+    room_id: roomId,
+    msg_data: message,
+    message,
+  };
+  try {
+    return await gravity.room("send_msg", payload, 1800);
+  } catch (error) {
+    return gravity.room("send_message", payload, 1800);
+  }
 }
 
 function handleGravityMessage(event) {
@@ -441,33 +454,66 @@ function onPlayerStateChange(event) {
 }
 
 function createGravityBridge() {
-  const pending = new Map();
+  const pendingApi = new Map();
+  const pendingRoom = new Map();
   let roomHandler = () => {};
 
   window.addEventListener("message", (event) => {
     const data = event.data || {};
-    if (data.type === "API_CALLBACK" && pending.has(data.id)) {
-      const entry = pending.get(data.id);
-      pending.delete(data.id);
+
+    const apiId = data.requestId || data.id;
+    if (data.type === "API_CALLBACK" && apiId && pendingApi.has(apiId)) {
+      const entry = pendingApi.get(apiId);
+      pendingApi.delete(apiId);
       clearTimeout(entry.timer);
-      data.success ? entry.resolve(data.payload) : entry.reject(new Error(data.message || "Gravity API failed"));
+      data.error ? entry.reject(data.error) : entry.resolve(data.payload);
     }
+
+    const roomId = data.actionId || data.actionld;
+    if ((data.type === "gravityroomresponse" || data.type === "gravity_room_response") && roomId && pendingRoom.has(roomId)) {
+      const entry = pendingRoom.get(roomId);
+      pendingRoom.delete(roomId);
+      clearTimeout(entry.timer);
+      const result = data.result || {};
+      if (result.errno !== undefined && result.errno !== 0) {
+        entry.reject(new Error(result.errmsg || `Gravity room error ${result.errno}`));
+      } else {
+        entry.resolve(result);
+      }
+    }
+
+    if (data.type === "gravityroomevent" || data.type === "gravity_room_event") {
+      roomHandler(data.payload || data);
+    }
+
     if (data.type === "EVENT_CALLBACK" && data.action === "AgentSDK.room.receiveMessage") {
       roomHandler(data.payload);
     }
   });
 
   return {
-    call(action, payload = {}, timeout = 1500) {
-      if (window.parent === window) return Promise.reject(new Error("Gravity loader is not available"));
-      const id = crypto.randomUUID();
+    api(action, params = {}, timeout = 1500) {
+      if (!isGravityFrame) return Promise.reject(new Error("Gravity loader is not available"));
+      const requestId = `req_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
-          pending.delete(id);
+          pendingApi.delete(requestId);
           reject(new Error("Gravity API timeout"));
         }, timeout);
-        pending.set(id, { resolve, reject, timer });
-        window.parent.postMessage({ type: "API", id, action, payload }, "*");
+        pendingApi.set(requestId, { resolve, reject, timer });
+        window.top.postMessage({ type: "API", action, requestId, params }, "*");
+      });
+    },
+    room(action, params = {}, timeout = 1500) {
+      if (!isGravityFrame) return Promise.reject(new Error("Gravity loader is not available"));
+      const actionId = `${action}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pendingRoom.delete(actionId);
+          reject(new Error("Gravity room timeout"));
+        }, timeout);
+        pendingRoom.set(actionId, { resolve, reject, timer });
+        window.parent.postMessage({ action, actionId, actionld: actionId, ...params }, "*");
       });
     },
     onRoomMessage(handler) {
@@ -477,7 +523,12 @@ function createGravityBridge() {
 }
 
 function parseGravityEnvelope(event) {
-  const raw = event?.data?.pkg_data?.msg_data || event?.pkg_data?.msg_data || event?.message || event;
+  const raw =
+    event?.data?.msg_data ||
+    event?.data?.pkg_data?.msg_data ||
+    event?.pkg_data?.msg_data ||
+    event?.message ||
+    event;
   try {
     const value = typeof raw === "string" ? JSON.parse(raw) : raw;
     return value?.app === "gravity-watch-party" ? value : null;
@@ -501,9 +552,25 @@ function publicMember(member) {
   };
 }
 
+function normalizeGravityUser(value) {
+  const user = value?.data || value?.payload?.data || value?.payload || value;
+  if (!user || typeof user !== "object") return null;
+  return {
+    name: user.name || user.nickname || user.user_name || user.username || "",
+    portrait: user.portrait || user.avatar || user.icon || user.head_img || user.headimgurl || user.profile_image || "",
+    user_id: user.user_id || user.uid || user.id || "",
+  };
+}
+
 function applyProfileFromUrl() {
-  const name = params.get("name") || params.get("nickname") || params.get("userName");
-  const avatar = params.get("avatar") || params.get("portrait") || params.get("icon");
+  const name = params.get("username") || params.get("name") || params.get("nickname") || params.get("userName");
+  const rawAvatar =
+    params.get("portrait") ||
+    params.get("avatar") ||
+    params.get("icon") ||
+    params.get("head_img") ||
+    params.get("headimgurl");
+  const avatar = rawAvatar ? decodeURIComponent(rawAvatar) : "";
   const gravityUserId = params.get("user_id") || params.get("uid") || params.get("userId");
 
   if (!name && !avatar && !gravityUserId) return;

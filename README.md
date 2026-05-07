@@ -27,8 +27,14 @@ GitHub Pages では Node サーバーは動かないため、リポジトリ直�
 
 Gravity ルームがある招待URLから開かれた場合は自動参加します。通常起動の場合は、画面右上の共有ボタンで Gravity ルームを作成して招待します。
 
-## Gravity ローダーの origin 注意
+## Gravity ローダー連携
 
-`id=39819` のローダー実装を見る限り、SDK の `postMessage` は `https://cdn.gravity.place` origin だけを受けるチェックがあります。GitHub Pages の URL を直接 iframe に入れる場合、Gravity 側で GitHub Pages の origin を許可するか、Gravity CDN 配下にホストしないと、ユーザー情報とルームAPIは使えません。
+スマグラと同じローダーブリッジ形式に合わせています。
 
-この制約に当たった場合、画面では「連携不可」と表示します。ローカル開発時だけ WebSocket にフォールバックします。
+- ユーザー情報: `window.top.postMessage({ type: "API", action, requestId, params }, "*")`
+- ユーザー情報の応答: `API_CALLBACK`
+- ルーム操作: `window.parent.postMessage({ action, actionId, actionld, ...params }, "*")`
+- ルーム応答: `gravityroomresponse` / `gravity_room_response`
+- ルームイベント: `gravityroomevent` / `gravity_room_event`
+
+ローカル開発時だけ WebSocket にフォールバックします。
