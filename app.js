@@ -20,6 +20,7 @@ let currentState = { videoId: "", title: "", time: 0, playing: false };
 let playlist = [];
 let currentVideoIndex = -1;
 let hostSyncTimer;
+let pendingHostSync = null;
 let messages = [];
 let members = new Map();
 let seenGravityMessages = new Set();
@@ -95,6 +96,11 @@ window.onYouTubeIframeAPIReady = () => {
     events: {
       onReady: () => {
         playerReady = true;
+        if (pendingHostSync) {
+          const pending = pendingHostSync;
+          pendingHostSync = null;
+          handleHostSync(pending.state, pending.sentAt);
+        }
         applyState(currentState, false);
       },
       onStateChange: onPlayerStateChange,
@@ -650,6 +656,10 @@ function broadcastPlayerControl(action, time) {
 
 function handleHostSync(state, sentAt) {
   if (!state) return;
+  if (!playerReady) {
+    pendingHostSync = { state, sentAt };
+    return;
+  }
   playlist = Array.isArray(state.playlist) ? state.playlist : [];
   currentVideoIndex = Number.isInteger(state.currentIndex) ? state.currentIndex : -1;
   renderPlaylist();
@@ -676,7 +686,11 @@ function handleHostSync(state, sentAt) {
 }
 
 function handleHostControl(action, time, sentAt) {
-  if (!playerReady || !currentState.videoId) return;
+  if (!playerReady) return;
+  if (!currentState.videoId) {
+    sendRoomEvent({ type: "REQ_SYNC" });
+    return;
+  }
   const lagSeconds = action === "PLAYING" && sentAt ? Math.max(0, Math.min(3, (Date.now() - Number(sentAt)) / 1000)) : 0;
   const targetTime = Number(time || 0) + lagSeconds;
   if (action === "PLAYING") {
