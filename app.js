@@ -13,6 +13,7 @@ let playerReady = false;
 let suppressEvents = false;
 let transport = "pending";
 let gravityRoomReady = false;
+let isHost = false;
 let presenceTimer;
 let currentState = { videoId: "", title: "", time: 0, playing: false };
 let messages = [];
@@ -33,9 +34,17 @@ const elements = {
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
   connectionStatus: document.querySelector("#connectionStatus"),
+  createPrivateRoom: document.querySelector("#createPrivateRoom"),
+  createPublicRoom: document.querySelector("#createPublicRoom"),
+  currentRoomId: document.querySelector("#currentRoomId"),
   displayName: document.querySelector("#displayName"),
   emptyState: document.querySelector("#emptyState"),
   gravityStatus: document.querySelector("#gravityStatus"),
+  hostBadge: document.querySelector("#hostBadge"),
+  joinRoomButton: document.querySelector("#joinRoomButton"),
+  joinRoomId: document.querySelector("#joinRoomId"),
+  leaveRoom: document.querySelector("#leaveRoom"),
+  lobbyScreen: document.querySelector("#lobbyScreen"),
   memberCount: document.querySelector("#memberCount"),
   members: document.querySelector("#members"),
   messages: document.querySelector("#messages"),
@@ -44,6 +53,7 @@ const elements = {
   poster: document.querySelector("#poster"),
   profileAvatar: document.querySelector("#profileAvatar"),
   roomLabel: document.querySelector("#roomLabel"),
+  roomScreen: document.querySelector("#roomScreen"),
   saveName: document.querySelector("#saveName"),
   shareRoom: document.querySelector("#shareRoom"),
   syncButton: document.querySelector("#syncButton"),
@@ -139,6 +149,28 @@ elements.saveName.addEventListener("click", () => {
   showToast("表示名を更新しました");
 });
 
+elements.createPublicRoom.addEventListener("click", () => {
+  ensureGravityRoom(true, 0);
+});
+
+elements.createPrivateRoom.addEventListener("click", () => {
+  ensureGravityRoom(true, 1);
+});
+
+elements.joinRoomButton.addEventListener("click", () => {
+  const id = elements.joinRoomId.value.trim();
+  if (id) joinGravityRoom(id);
+});
+
+elements.joinRoomId.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    elements.joinRoomButton.click();
+  }
+});
+
+elements.leaveRoom.addEventListener("click", leaveGravityRoom);
+
 elements.shareRoom.addEventListener("click", async () => {
   if (transport === "gravity" || transport === "gravity-unavailable") {
     transport = "gravity";
@@ -176,9 +208,11 @@ async function start() {
   if (isGravityFrame) {
     setConnection("Gravity待機", false);
     elements.gravityStatus.textContent = "共有ボタンでルーム作成を試せます";
+    showLobby();
   } else {
     setConnection("Gravity外", false);
     elements.gravityStatus.textContent = "Gravity内で開くとユーザー情報を使えます";
+    showLobby();
   }
 }
 
@@ -221,13 +255,10 @@ async function setupGravity() {
 
     const gravityRoomId = params.get("room_id") || params.get("roomid") || params.get("roomId") || "";
     if (gravityRoomId) {
-      roomId = gravityRoomId;
-      const joinResult = await gravity.room("join_room", { room_id: roomId }, 2500).catch(() => null);
-      addUsersFromRoomResult(joinResult);
-      await enableGravityRoom();
+      await joinGravityRoom(gravityRoomId, { quiet: true });
     } else {
       renderRoomLabel("Gravityルーム未作成");
-      showToast("共有ボタンでGravityルームを作成できます");
+      showLobby();
     }
     return true;
   } catch (error) {
@@ -241,44 +272,85 @@ async function setupGravity() {
       transport = "gravity";
       setConnection("Gravity待機", false);
       renderRoomLabel("Gravityルーム未作成");
+      showLobby();
       return true;
     }
     return false;
   }
 }
 
-async function ensureGravityRoom(showInvite) {
+async function ensureGravityRoom(showInvite, permission = 0) {
   if (gravityRoomReady) {
     if (showInvite) showToast("Gravityのルーム招待を開きました");
     return;
   }
 
   try {
+    transport = "gravity";
+    setConnection("作成中", false);
     const result = await gravity.room(
       "create_room",
-      { room_type: "aitools_game_room", max_players: 20, maxplayers: 20, room_permission: 0, permission: 0 },
+      { room_type: "aitools_game_room", max_players: 20, maxplayers: 20, room_permission: permission, permission },
       3000,
     );
     const roomData = result?.data || result || {};
     const createdRoomId = roomData.room_id || roomData.roomId || "";
     if (createdRoomId) roomId = createdRoomId;
+    isHost = true;
     await enableGravityRoom();
     broadcastCurrentState();
-    if (showInvite) showToast("Gravityルームを作成しました");
+    if (showInvite) showToast(`ルームを作成しました: ${roomId}`);
   } catch {
     showToast("Gravityルームを作成できませんでした");
+    showLobby();
+  }
+}
+
+async function joinGravityRoom(id, options = {}) {
+  try {
+    transport = "gravity";
+    setConnection("参加中", false);
+    roomId = id;
+    const joinResult = await gravity.room("join_room", { room_id: roomId }, 3000);
+    addUsersFromRoomResult(joinResult);
+    isHost = false;
+    await enableGravityRoom();
+    sendRoomEvent({ type: "REQ_SYNC" });
+    if (!options.quiet) showToast("ルームに参加しました");
+  } catch (error) {
+    console.warn("Join room failed", error);
+    showToast("ルームに参加できませんでした");
+    showLobby();
   }
 }
 
 async function enableGravityRoom() {
   gravityRoomReady = true;
   renderRoomLabel("Gravityルーム");
+  showRoom();
   gravity.onRoomMessage(handleGravityMessage);
   addOrRefreshMember(you);
   renderRoster();
   announcePresence();
   clearInterval(presenceTimer);
   presenceTimer = setInterval(announcePresence, 12000);
+}
+
+async function leaveGravityRoom() {
+  try {
+    if (transport === "gravity") await gravity.room("exit_room", {}, 1200).catch(() => {});
+  } finally {
+    gravityRoomReady = false;
+    isHost = false;
+    roomId = params.get("room") || params.get("roomId") || makeRoomId();
+    members.clear();
+    messages = [];
+    renderMessages(messages);
+    addOrRefreshMember(you);
+    renderRoster();
+    showLobby();
+    setConnection(isGravityFrame ? "Gravity待機" : "Gravity外", false);
+  }
 }
 
 function connectWebSocket(rejoin = false) {
@@ -423,6 +495,10 @@ function handleGravityEnvelope(envelope) {
 
 function handleRoomEvent(event) {
   if (event.type === "presence") return;
+  if (event.type === "REQ_SYNC") {
+    if (isHost) broadcastCurrentState();
+    return;
+  }
   if (event.type === "loadVideo" || event.type === "stateSnapshot") {
     currentState = { ...event.state, updatedAt: Date.now() };
     applyState(currentState, event.type === "stateSnapshot");
@@ -724,6 +800,19 @@ function renderRoster(roster) {
   );
 }
 
+function showLobby() {
+  elements.lobbyScreen.classList.add("active");
+  elements.roomScreen.classList.remove("active");
+}
+
+function showRoom() {
+  elements.lobbyScreen.classList.remove("active");
+  elements.roomScreen.classList.add("active");
+  elements.currentRoomId.textContent = roomId || "----";
+  elements.joinRoomId.value = "";
+  elements.hostBadge.classList.toggle("show", isHost);
+}
+
 function renderMessages(nextMessages) {
   messages = [];
   elements.messages.replaceChildren();
@@ -785,6 +874,8 @@ async function resolveTitle(videoId) {
 
 function renderRoomLabel(prefix = transport === "gravity" ? "Gravity" : "local") {
   elements.roomLabel.textContent = `${prefix}: ${roomId}`;
+  if (elements.currentRoomId) elements.currentRoomId.textContent = roomId || "----";
+  if (elements.hostBadge) elements.hostBadge.classList.toggle("show", isHost);
 }
 
 function makeRoomId() {
